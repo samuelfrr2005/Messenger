@@ -6,6 +6,7 @@ require_once("./db_credentials.php");
 $mysqli = new mysqli(DB_HOST, DB_USER, DB_PW, DB_NAME);
 if ($mysqli->connect_errno) { http_response_code(500); exit; }
 $mysqli->set_charset("utf8mb4");
+3+
 
 $me = (int)$_SESSION["id"];
 

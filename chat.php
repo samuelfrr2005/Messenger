@@ -14,6 +14,7 @@
 </header>
 
 <?php
+// Session Check (Security)
 session_start();
 if (!isset($_SESSION['id'])) {
     header("Location: index.php");
@@ -32,20 +33,24 @@ if (!isset($_SESSION['id'])) {
 <main>
     <section class="section">
         <h2>Nachrichten</h2>
-
+        <!-- Chat controls (select chat partner + select send mode) -->
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <label>Chat mit:</label>
             <select id="withUser">
                 <option value="0">Alle (Inbox)</option>
             </select>
 
-            <button id="broadcastBtn" type="button">Broadcast senden</button>
+            <label>Senden als:</label>
+            <select id="sendMode">
+                <option value="private">Private Nachricht</option>
+                <option value="broadcast">Broadcast (alle)</option>
+            </select>
         </div>
-
+        <!--Messages are appended here dynamically using JavaScript -->
         <div id="chatBox" style="margin-top:12px; height:380px; overflow:auto; border:1px solid #ccc; padding:10px; border-radius:8px; background:#fff;">
             <!-- messages -->
         </div>
-
+        <!--Submission is handled via AJAX -> no page reload -->
         <form id="sendForm" style="margin-top:12px; display:flex; gap:10px;">
             <input id="message" name="message" type="text" placeholder="Deine Nachricht..." style="flex:1;" required>
             <button type="submit">Senden</button>
@@ -58,32 +63,34 @@ if (!isset($_SESSION['id'])) {
 <script>
     let lastId = 0;
     let polling = null;
-    let broadcastMode = false;
 
     function appendMessages(rows) {
-        const box = $("#chatBox");
-        for (const m of rows) {
+        let box = $("#chatBox");
+        for (let m of rows) {
+            // Update lastId to the biggest message ID we have seen
             lastId = Math.max(lastId, parseInt(m.idMessage, 10));
 
-            const meta = m.isBroadcast == 1
+            let meta = m.isBroadcast == 1
                 ? `[${m.createdAt}] (Broadcast) ${m.senderName}: `
-                : `[${m.createdAt}] ${m.senderName} -> ${m.receiverName ?? "?"}: `;
-
+                : `[${m.createdAt}] ${m.senderName} send to ${m.receiverName ?? "?"}: `;
+            // Append message line into chat box
             box.append(`<div style="margin-bottom:6px;"><b>${meta}</b>${m.message}</div>`);
         }
+        // Auto-scroll to the bottom if new messages were added
         if (rows.length > 0) box.scrollTop(box[0].scrollHeight);
     }
-
+    // LOAD USERS INTO DROPDOWN
     function loadUsers() {
         $.getJSON("php/getUsers.php").done(users => {
-            for (const u of users) {
+            for (let u of users) {
+                // Add each user as selectable option
                 $("#withUser").append(`<option value="${u.idTrainer}">${u.username}</option>`);
             }
         });
     }
-
+    // Requests new messages from php/getMessages.php every second.
     function poll() {
-        const withId = parseInt($("#withUser").val(), 10);
+        let withId = parseInt($("#withUser").val(), 10);
         $.getJSON("php/getMessages.php", { afterId: lastId, withId: withId })
             .done(rows => appendMessages(rows))
             .fail(() => {});
@@ -92,6 +99,17 @@ if (!isset($_SESSION['id'])) {
     function startPolling() {
         if (polling) clearInterval(polling);
         polling = setInterval(poll, 1000); // 1x pro Sekunde
+    }
+
+    function updateModeUI() {
+        let mode = $("#sendMode").val();
+        let isBroadcast = (mode === "broadcast");
+
+        // When broadcasting, selecting a user is not needed
+        $("#withUser").prop("disabled", isBroadcast);
+
+        // Optional: if broadcast is selected, reset user dropdown to Inbox
+        if (isBroadcast) $("#withUser").val("0");
     }
 
     $(document).ready(function() {
@@ -105,34 +123,41 @@ if (!isset($_SESSION['id'])) {
         startPolling();
         poll(); // direkt einmal laden
 
+        // Switch chat partner: clear and reload messages
         $("#withUser").change(function(){
-            // Wechsel: Chatbox leeren + lastId reset, dann neu laden
             $("#chatBox").html("");
             lastId = 0;
-            broadcastMode = false;
-            $("#broadcastBtn").text("Broadcast senden");
             poll();
         });
 
-        $("#broadcastBtn").click(function(){
-            broadcastMode = !broadcastMode;
-            $(this).text(broadcastMode ? "Broadcast: AN" : "Broadcast senden");
+        // Switch send mode (private/broadcast)
+        $("#sendMode").change(function(){
+            updateModeUI();
         });
 
+        // Init UI state
+        updateModeUI();
+
+        // Send message
         $("#sendForm").submit(function(e){
             e.preventDefault();
             $("#warn").text("");
 
-            const msg = $("#message").val();
-            const withId = parseInt($("#withUser").val(), 10);
+            // Read input values
+            let msg = $("#message").val();
+            let withId = parseInt($("#withUser").val(), 10);
+            let mode = $("#sendMode").val();
 
-            const payload = { message: msg };
+            // Payload always includes message text
+            let payload = { message: msg };
 
-            if (broadcastMode) {
+            if (mode === "broadcast") {
+                // Broadcast message -> goes to all users
                 payload.broadcast = "1";
             } else {
+                // Private message -> must have a selected receiver
                 if (withId <= 0) {
-                    $("#warn").text("Bitte wähle einen Nutzer aus (oder aktiviere Broadcast).");
+                    $("#warn").text("Bitte wähle einen Nutzer oder stelle auf Broadcast um.");
                     return;
                 }
                 payload.idReceiver = withId;
@@ -140,10 +165,13 @@ if (!isset($_SESSION['id'])) {
 
             $.post("php/sendMessage.php", payload)
                 .done(() => {
+                    // Clear input after success
                     $("#message").val("");
-                    poll(); // sofort aktualisieren
+                    // Immediately fetch new messages
+                    poll();
                 })
                 .fail((xhr) => {
+                    // Show send error (backend response or status code)
                     $("#warn").text("Senden fehlgeschlagen: " + (xhr.responseText || xhr.status));
                 });
         });
